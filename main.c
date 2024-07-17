@@ -28,12 +28,15 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <psxgpu.h>
+#include <psxpad.h>
 #include <stdlib.h>
+
+#define NUM_RECTANGLES 1
 
 // Length of the ordering table, i.e. the range Z coordinates can have, 0-15 in
 // this case. Larger values will allow for more granularity with depth (useful
 // when drawing a complex 3D scene) at the expense of RAM usage and performance.
-#define OT_LENGTH 101
+#define OT_LENGTH NUM_RECTANGLES + 1
 
 // Size of the buffer GPU commands and primitives are written to. If the program
 // crashes due to too many primitives being drawn, increase this value.
@@ -162,24 +165,37 @@ int main(int argc, const char **argv) {
 	RenderContext ctx;
 	setup_context(&ctx, SCREEN_XRES, SCREEN_YRES, 63, 0, 127);
 
-	int x[100];
-	int y[100];
+	// Set up controller polling.
+	uint8_t pad_buff[2][34];
+	InitPAD(pad_buff[0], 34, pad_buff[1], 34);
+	StartPAD();
+	ChangeClearPAD(0);
 
-	int r[100];
-	int g[100];
-	int b[100];
+	int vel[4] = {1, 3, 5, 7};
 
-	int dx[100];
-	int dy[100];
+	int x[NUM_RECTANGLES];
+	int y[NUM_RECTANGLES];
 
-	TILE *tiles[100];
+	int r[NUM_RECTANGLES];
+	int g[NUM_RECTANGLES];
+	int b[NUM_RECTANGLES];
 
-	int w = 32;
-	int h = 32;
+	int dx[NUM_RECTANGLES];
+	int dy[NUM_RECTANGLES];
+
+	TILE *tiles[NUM_RECTANGLES];
+
+	int baseW = 32;
+	int baseH = 32;
+
+	int w = baseW;
+	int h = baseH;
 
 	int i;
+	uint16_t last_buttons = 0xffff;
+	int curVel = 0;
 
-	for(i = 0; i < 100; i++)
+	for(i = 0; i < NUM_RECTANGLES; i++)
 	{
 		x[i] = rand() % (SCREEN_XRES - w); //tra 0 e 320 - la grandezza del quadrato
 		y[i] = rand() % (SCREEN_YRES - h);
@@ -194,13 +210,137 @@ int main(int argc, const char **argv) {
 
 	for (;;) 
 	{
-		for(i = 0; i < 100; i++)
+		int controls[4] = {0, 0, 0, 0};
+		char debug[64];
+
+		for(i = 0; i < NUM_RECTANGLES; i++)
 		{
-			update_position(&x[i], &y[i], &dx[i], &dy[i], w, h); //aggiornare posizione di un quadrato alla volta
+			//update_position(&x[i], &y[i], &dx[i], &dy[i], w, h); //aggiornare posizione di un quadrato alla volta
 			draw_rectangle(&ctx, &tiles[i], x[i], y[i], i + 1, w, h, r[i], g[i], b[i]);
 		}
 
-		draw_text(&ctx, 8, 16, 0, "Benchmark");
+
+
+		PADTYPE *pad = (PADTYPE *) pad_buff[0];
+	
+		// if (
+		// 	//(pad->type != PAD_ID_DIGITAL) &&
+		// 	(pad->type != PAD_ID_ANALOG_STICK) &&
+		// 	(pad->type != PAD_ID_ANALOG)
+		// )
+		// 	continue;
+		if (!pad->stat)
+		{
+			if (!(pad->btn & PAD_RIGHT))
+			{
+				int pos = x[0] + vel[curVel];
+
+				if(pos > SCREEN_XRES - w)
+					pos = SCREEN_XRES - w;
+
+				x[0] = pos;
+				
+				controls[0] = 1;
+			} 
+			else if(!(pad->btn & PAD_LEFT))
+			{
+				int pos = x[0] - vel[curVel];
+
+				if(pos < 0)
+					pos = 0;
+
+				x[0] = pos;
+
+				controls[1] = 1;
+			}
+
+			if (!(pad->btn & PAD_UP))
+			{
+				int pos = y[0] - vel[curVel];
+
+				if(pos < 0)
+					pos = 0;
+				
+				y[0] = pos;
+
+				controls[2] = 1;
+			} 
+			else if(!(pad->btn & PAD_DOWN))
+			{
+				int pos = y[0] + vel[curVel];
+
+				if(pos > SCREEN_YRES - h)
+					pos = SCREEN_YRES - h;
+				
+				y[0] = pos;
+
+				controls[3] = 1;
+			}
+
+			//per evitare di switchare a manetta
+			if((last_buttons & PAD_CROSS) && !(pad->btn & PAD_CROSS))			
+			{
+				r[0] = rand() % 256;
+				g[0] = rand() % 256;
+				b[0] = rand() % 256;
+			}
+			if((last_buttons & PAD_SQUARE) && !(pad->btn & PAD_SQUARE))			
+			{
+				int v = curVel + 1;
+
+				if(v == 4)
+					v = 0;
+
+				curVel = v;
+			}
+
+			//rimpicciolimento
+			if((last_buttons & PAD_L1) && !(pad->btn & PAD_L1))			
+			{
+				int curW = w - baseW;
+				int curH = h - baseH;
+
+				if(curW < 32)
+					curW = 32;
+
+				if(curH < 32)
+					curH = 32;
+
+				w = curW;
+				h = curH;
+			}
+			//ingrandimento
+			if((last_buttons & PAD_R1) && !(pad->btn & PAD_R1))			
+			{
+				int curW = w + baseW;
+				int curH = h + baseH;
+
+				if(curW > SCREEN_XRES - 32)
+					curW = SCREEN_XRES - 32;
+
+				if(curH > SCREEN_YRES - 32)
+					curH = SCREEN_YRES - 32;
+
+				w = curW;
+				h = curH;
+			}
+
+			last_buttons = pad->btn;
+		}
+
+		sprintf(debug, "VELOCITY: %d", vel[curVel]);
+
+		draw_text(&ctx, 8, 16, 0, debug);
+
+		sprintf(debug, "PAD R L U D: %d %d %d %d", 
+						controls[0],
+						controls[1],
+						controls[2],
+						controls[3]);
+
+		draw_text(&ctx, 8, 32, 0, debug);
+
+		//draw_text(&ctx, 8, 48, 0, "Benchmark");
 
 		flip_buffers(&ctx);
 	}
