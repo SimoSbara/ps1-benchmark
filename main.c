@@ -31,7 +31,7 @@
 #include <psxpad.h>
 #include <stdlib.h>
 
-#define NUM_RECTANGLES 1
+#define NUM_RECTANGLES 100
 
 // Length of the ordering table, i.e. the range Z coordinates can have, 0-15 in
 // this case. Larger values will allow for more granularity with depth (useful
@@ -57,6 +57,63 @@ typedef struct {
 	uint8_t      *next_packet;
 	int          active_buffer;
 } RenderContext;
+
+//strutture benchmark vari
+
+#define SCREEN_XRES 320
+#define SCREEN_YRES 240
+
+#define BASE_W	32
+#define BASE_H	32
+
+#define MENU_START_Y	SCREEN_YRES / 3
+#define MENU_CHOICE_DY	16 //distanza tra una voce e l'altra in Y
+#define MENU_X			SCREEN_XRES / 3
+
+#define START_VEL		1
+
+enum menuChoices
+{
+	STRESS_TEST = 0,
+	MOV_TEST,
+	AUDIO_TEST,
+	BACK_CHOICE,
+	NUM_CHOICES
+};
+
+TILE *tiles[NUM_RECTANGLES];
+
+TILE *menuTile;
+
+static int x[NUM_RECTANGLES];
+static int y[NUM_RECTANGLES];
+
+static int r[NUM_RECTANGLES];
+static int g[NUM_RECTANGLES];
+static int b[NUM_RECTANGLES];
+
+static int dx[NUM_RECTANGLES];
+static int dy[NUM_RECTANGLES];
+
+static int w[NUM_RECTANGLES];
+static int h[NUM_RECTANGLES];
+
+static int curMode = STRESS_TEST;
+static int curMenuChoice = 0;
+static int isInMenu = 1;
+
+static uint16_t lastButtons = 0xffff;
+
+static int curVel = START_VEL;
+static int vel[4] = {1, 3, 5, 7};
+
+static char menuChoicesText[NUM_CHOICES][64] =
+{
+	{"STRESS TEST"},
+	{"MOVEMENT TEST"},
+	{"AUDIO TEST"},
+	{"BACK"}
+};
 
 void setup_context(RenderContext *ctx, int w, int h, int r, int g, int b) {
 	// Place the two framebuffers vertically in VRAM.
@@ -131,8 +188,6 @@ void draw_text(RenderContext *ctx, int x, int y, int z, const char *text) {
 
 /* Main */
 
-#define SCREEN_XRES 320
-#define SCREEN_YRES 240
 
 int update_position(int *x, int *y, int *dx, int *dy, int w, int h)
 {
@@ -155,6 +210,279 @@ int draw_rectangle(RenderContext* ctx, TILE** tile, int x, int y, int z, int w, 
 	setRGB0(*tile, r, g, b);
 }
 
+void InitRectangle(int i)
+{
+	x[i] = rand() % (SCREEN_XRES - BASE_W); //tra 0 e 320 - la grandezza del quadrato
+	y[i] = rand() % (SCREEN_YRES - BASE_H);
+
+	r[i] = rand() % 256;
+	g[i] = rand() % 256;
+	b[i] = rand() % 256;
+
+	dx[i] = rand() % 6 + 1;
+	dy[i] = rand() % 6 + 1;
+
+	w[i] = BASE_W;
+	h[i] = BASE_H;
+}
+
+void InitStressTest()
+{
+	int i;
+
+	for(i = 0; i < NUM_RECTANGLES; i++)
+	{
+		InitRectangle(i);
+	}
+}
+
+void InitMovableTest()
+{
+	curVel = START_VEL;
+
+	InitRectangle(0);
+}
+
+void DrawStressTest(RenderContext* ctx)
+{
+	int i;
+
+	for(i = 0; i < NUM_RECTANGLES; i++)
+	{
+		update_position(&x[i], &y[i], &dx[i], &dy[i], w[i], h[i]); //aggiornare posizione di un quadrato alla volta
+		draw_rectangle(ctx, &tiles[i], x[i], y[i], i + 1, w[i], h[i], r[i], g[i], b[i]);
+	}
+}
+
+void DrawMovableTest(RenderContext* ctx)
+{
+	//utilizzo solo il primo
+	draw_rectangle(ctx, &tiles[0], x[0], y[0], 1, w[0], h[0], r[0], g[0], b[0]);
+}
+
+void DrawMenu(RenderContext* ctx)
+{
+	int i;
+	int y = MENU_START_Y;
+
+	for(i = 0; i < NUM_CHOICES; i++)
+	{
+		if(curMenuChoice == i)
+			draw_rectangle(ctx, &menuTile, MENU_X - BASE_W, y, 0, 8, 8, 255, 0, 0);
+
+		draw_text(ctx, MENU_X, y, 0, menuChoicesText[i]);
+
+		y += MENU_CHOICE_DY;
+	}
+}
+
+void HandleMovableTestCommands(PADTYPE* pad)
+{
+	if (!(pad->btn & PAD_RIGHT))
+	{
+		int pos = x[0] + vel[curVel];
+
+		if(pos > SCREEN_XRES - w[0])
+			pos = SCREEN_XRES - w[0];
+
+		x[0] = pos;
+	} 
+	else if(!(pad->btn & PAD_LEFT))
+	{
+		int pos = x[0] - vel[curVel];
+
+		if(pos < 0)
+			pos = 0;
+
+		x[0] = pos;
+	}
+
+	if (!(pad->btn & PAD_UP))
+	{
+		int pos = y[0] - vel[curVel];
+
+		if(pos < 0)
+			pos = 0;
+		
+		y[0] = pos;
+	} 
+	else if(!(pad->btn & PAD_DOWN))
+	{
+		int pos = y[0] + vel[curVel];
+
+		if(pos > SCREEN_YRES - h[0])
+			pos = SCREEN_YRES - h[0];
+		
+		y[0] = pos;
+	}
+
+	//per evitare di switchare a manetta
+	if((lastButtons & PAD_CROSS) && !(pad->btn & PAD_CROSS))			
+	{
+		r[0] = rand() % 256;
+		g[0] = rand() % 256;
+		b[0] = rand() % 256;
+	}
+	if((lastButtons & PAD_SQUARE) && !(pad->btn & PAD_SQUARE))			
+	{
+		int v = curVel + 1;
+
+		if(v == 4)
+			v = 0;
+
+		curVel = v;
+	}
+
+	//rimpicciolimento
+	if((lastButtons & PAD_L1) && !(pad->btn & PAD_L1))			
+	{
+		int curW = w[0] - BASE_W;
+		int curH = h[0] - BASE_H;
+
+		if(curW < BASE_W)
+			curW = BASE_W;
+
+		if(curH < BASE_H)
+			curH = BASE_H;
+
+		w[0] = curW;
+		h[0] = curH;
+	}
+	//ingrandimento
+	if((lastButtons & PAD_R1) && !(pad->btn & PAD_R1))			
+	{
+		int curW = w[0] + BASE_W;
+		int curH = h[0] + BASE_H;
+
+		if(curW > SCREEN_XRES - BASE_W)
+			curW = SCREEN_XRES - BASE_W;
+
+		if(curH > SCREEN_YRES - BASE_H)
+			curH = SCREEN_YRES - BASE_H;
+
+		w[0] = curW;
+		h[0] = curH;
+	}
+}
+
+void HandleStressTestCommands(PADTYPE* pad)
+{
+	if(!(pad->btn & PAD_SELECT))
+	{
+		InitStressTest();
+	}
+}
+
+void OpenMenu()
+{
+	isInMenu = 1;
+	curMenuChoice = 0;
+}
+
+void CloseMenu()
+{
+	isInMenu = 0;
+}
+
+void HandleMenuCommands(PADTYPE* pad)
+{
+	if((lastButtons & PAD_DOWN) && !(pad->btn & PAD_DOWN))
+	{
+		int choice = curMenuChoice + 1;
+
+		if(choice == NUM_CHOICES)
+			choice = 0;
+
+		curMenuChoice = choice;
+	}
+	else if((lastButtons & PAD_UP) &&!(pad->btn & PAD_UP))
+	{
+		int choice = curMenuChoice - 1;
+
+		if(choice < 0)
+			choice = 0;
+
+		curMenuChoice = choice;
+	}
+	else if(!(pad->btn & PAD_CROSS))
+	{
+		switch(curMenuChoice)
+		{
+			case STRESS_TEST:
+				InitStressTest();
+			break;
+			case MOV_TEST:
+				InitMovableTest();
+			break;
+			case AUDIO_TEST:
+			break;
+		}
+
+		curMode = curMenuChoice;
+		isInMenu = 0;
+	}
+}
+
+void HandleCommands(PADTYPE* pad)
+{
+	if (!pad->stat)
+	{
+		if(!isInMenu)
+		{
+			switch(curMode)
+			{
+				case STRESS_TEST:
+				HandleStressTestCommands(pad);
+				break;
+
+				case MOV_TEST:
+				HandleMovableTestCommands(pad);
+				break;
+
+				case AUDIO_TEST:
+				break;
+			}
+
+			if(!(pad->btn & PAD_START))
+			{
+				OpenMenu();
+			}
+		}
+		else
+		{
+			HandleMenuCommands(pad);
+		}
+
+		lastButtons = pad->btn;
+	}
+}
+
+void DrawCurrentMode(RenderContext *ctx)
+{
+	int i;
+
+	if(isInMenu)
+	{
+		DrawMenu(ctx);
+
+		return;
+	}
+
+	switch(curMode)
+	{
+		case STRESS_TEST:
+		DrawStressTest(ctx);
+		break;
+
+		case MOV_TEST:
+		DrawMovableTest(ctx);
+		break;
+
+		case AUDIO_TEST:
+		break;
+	}
+}
+
 int main(int argc, const char **argv) {
 	// Initialize the GPU and load the default font texture provided by
 	// PSn00bSDK at (960, 0) in VRAM.
@@ -171,56 +499,8 @@ int main(int argc, const char **argv) {
 	StartPAD();
 	ChangeClearPAD(0);
 
-	int vel[4] = {1, 3, 5, 7};
-
-	int x[NUM_RECTANGLES];
-	int y[NUM_RECTANGLES];
-
-	int r[NUM_RECTANGLES];
-	int g[NUM_RECTANGLES];
-	int b[NUM_RECTANGLES];
-
-	int dx[NUM_RECTANGLES];
-	int dy[NUM_RECTANGLES];
-
-	TILE *tiles[NUM_RECTANGLES];
-
-	int baseW = 32;
-	int baseH = 32;
-
-	int w = baseW;
-	int h = baseH;
-
-	int i;
-	uint16_t last_buttons = 0xffff;
-	int curVel = 0;
-
-	for(i = 0; i < NUM_RECTANGLES; i++)
-	{
-		x[i] = rand() % (SCREEN_XRES - w); //tra 0 e 320 - la grandezza del quadrato
-		y[i] = rand() % (SCREEN_YRES - h);
-
-		r[i] = rand() % 256;
-		g[i] = rand() % 256;
-		b[i] = rand() % 256;
-
-		dx[i] = rand() % 6 + 1;
-		dy[i] = rand() % 6 + 1;
-	}
-
 	for (;;) 
 	{
-		int controls[4] = {0, 0, 0, 0};
-		char debug[64];
-
-		for(i = 0; i < NUM_RECTANGLES; i++)
-		{
-			//update_position(&x[i], &y[i], &dx[i], &dy[i], w, h); //aggiornare posizione di un quadrato alla volta
-			draw_rectangle(&ctx, &tiles[i], x[i], y[i], i + 1, w, h, r[i], g[i], b[i]);
-		}
-
-
-
 		PADTYPE *pad = (PADTYPE *) pad_buff[0];
 	
 		// if (
@@ -229,118 +509,9 @@ int main(int argc, const char **argv) {
 		// 	(pad->type != PAD_ID_ANALOG)
 		// )
 		// 	continue;
-		if (!pad->stat)
-		{
-			if (!(pad->btn & PAD_RIGHT))
-			{
-				int pos = x[0] + vel[curVel];
 
-				if(pos > SCREEN_XRES - w)
-					pos = SCREEN_XRES - w;
-
-				x[0] = pos;
-				
-				controls[0] = 1;
-			} 
-			else if(!(pad->btn & PAD_LEFT))
-			{
-				int pos = x[0] - vel[curVel];
-
-				if(pos < 0)
-					pos = 0;
-
-				x[0] = pos;
-
-				controls[1] = 1;
-			}
-
-			if (!(pad->btn & PAD_UP))
-			{
-				int pos = y[0] - vel[curVel];
-
-				if(pos < 0)
-					pos = 0;
-				
-				y[0] = pos;
-
-				controls[2] = 1;
-			} 
-			else if(!(pad->btn & PAD_DOWN))
-			{
-				int pos = y[0] + vel[curVel];
-
-				if(pos > SCREEN_YRES - h)
-					pos = SCREEN_YRES - h;
-				
-				y[0] = pos;
-
-				controls[3] = 1;
-			}
-
-			//per evitare di switchare a manetta
-			if((last_buttons & PAD_CROSS) && !(pad->btn & PAD_CROSS))			
-			{
-				r[0] = rand() % 256;
-				g[0] = rand() % 256;
-				b[0] = rand() % 256;
-			}
-			if((last_buttons & PAD_SQUARE) && !(pad->btn & PAD_SQUARE))			
-			{
-				int v = curVel + 1;
-
-				if(v == 4)
-					v = 0;
-
-				curVel = v;
-			}
-
-			//rimpicciolimento
-			if((last_buttons & PAD_L1) && !(pad->btn & PAD_L1))			
-			{
-				int curW = w - baseW;
-				int curH = h - baseH;
-
-				if(curW < 32)
-					curW = 32;
-
-				if(curH < 32)
-					curH = 32;
-
-				w = curW;
-				h = curH;
-			}
-			//ingrandimento
-			if((last_buttons & PAD_R1) && !(pad->btn & PAD_R1))			
-			{
-				int curW = w + baseW;
-				int curH = h + baseH;
-
-				if(curW > SCREEN_XRES - 32)
-					curW = SCREEN_XRES - 32;
-
-				if(curH > SCREEN_YRES - 32)
-					curH = SCREEN_YRES - 32;
-
-				w = curW;
-				h = curH;
-			}
-
-			last_buttons = pad->btn;
-		}
-
-		sprintf(debug, "VELOCITY: %d", vel[curVel]);
-
-		draw_text(&ctx, 8, 16, 0, debug);
-
-		sprintf(debug, "PAD R L U D: %d %d %d %d", 
-						controls[0],
-						controls[1],
-						controls[2],
-						controls[3]);
-
-		draw_text(&ctx, 8, 32, 0, debug);
-
-		//draw_text(&ctx, 8, 48, 0, "Benchmark");
+		DrawCurrentMode(&ctx);
+		HandleCommands(pad);
 
 		flip_buffers(&ctx);
 	}
