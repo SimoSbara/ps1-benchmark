@@ -13,6 +13,8 @@ project(
 
 psn00bsdk_add_executable(bench GPREL main.c)
 
+psn00bsdk_target_incbin(bench PRIVATE tilesc tilesc.tim)
+
 psn00bsdk_add_cd_image(
 	iso      # Target name
 	bench # Output file name (= bench.bin + bench.cue)

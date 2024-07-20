@@ -29,6 +29,7 @@
 #include <stdint.h>
 #include <psxgpu.h>
 #include <psxpad.h>
+#include <psxgte.h>
 #include <stdlib.h>
 
 #define NUM_RECTANGLES 100
@@ -81,7 +82,12 @@ enum menuChoices
 	NUM_CHOICES
 };
 
-TILE *tiles[NUM_RECTANGLES];
+extern const uint32_t tilesc[]; //riferimento tile con tutte le texture
+TIM_IMAGE timImage;
+
+//può essere TILE o può essere POLY_FT4
+//POLY_FT4 può avere la texture invece TILE no essendo una figura semplice
+void *tiles[NUM_RECTANGLES]; 
 
 TILE *menuTile;
 
@@ -101,6 +107,7 @@ static int h[NUM_RECTANGLES];
 static int curMode = STRESS_TEST;
 static int curMenuChoice = 0;
 static int isInMenu = 1;
+static int useTexture = 0;
 
 static uint16_t lastButtons = 0xffff;
 
@@ -115,6 +122,7 @@ static char menuChoicesText[NUM_CHOICES][64] =
 	{"BACK"}
 };
 
+//utilizza double buffer
 void setup_context(RenderContext *ctx, int w, int h, int r, int g, int b) {
 	// Place the two framebuffers vertically in VRAM.
 	SetDefDrawEnv(&(ctx->buffers[0].draw_env), 0, 0, w, h);
@@ -159,7 +167,8 @@ void flip_buffers(RenderContext *ctx) {
 	ClearOTagR(disp_buffer->ot, OT_LENGTH);
 }
 
-void *new_primitive(RenderContext *ctx, int z, size_t size) {
+void *new_primitive(RenderContext *ctx, int z, size_t size) 
+{
 	// Place the primitive after all previously allocated primitives, then
 	// insert it into the OT and bump the allocation pointer.
 	RenderBuffer *buffer = &(ctx->buffers[ctx->active_buffer]);
@@ -189,7 +198,7 @@ void draw_text(RenderContext *ctx, int x, int y, int z, const char *text) {
 /* Main */
 
 
-int update_position(int *x, int *y, int *dx, int *dy, int w, int h)
+void update_position(int *x, int *y, int *dx, int *dy, int w, int h)
 {
 	if (*x < 0 || *x > (SCREEN_XRES - w))
 		*dx = -*dx;
@@ -200,14 +209,46 @@ int update_position(int *x, int *y, int *dx, int *dy, int w, int h)
 	*y += *dy;
 }
 
-int draw_rectangle(RenderContext* ctx, TILE** tile, int x, int y, int z, int w, int h, int r, int g, int b)
+void draw_rectangle(RenderContext* ctx, void** prim, int texture, int ux, int uy, int x, int y, int z, int w, int h, int r, int g, int b)
 {
-	*tile = (TILE *) new_primitive(ctx, z, sizeof(TILE));
+	if(!texture)
+	{
+		TILE* tile = new_primitive(ctx, z, sizeof(TILE));
 
-	setTile(*tile);
-	setXY0 (*tile, x, y);
-	setWH  (*tile, w, h);
-	setRGB0(*tile, r, g, b);
+		setTile(tile);
+		setXY0 (tile, x, y);
+		setWH  (tile, w, h);
+		setRGB0(tile, r, g, b);
+
+		*prim = tile;
+	}
+	else
+	{
+		POLY_FT4* poly = (POLY_FT4*)new_primitive(ctx, z, sizeof(POLY_FT4));
+
+		setPolyFT4(poly);
+
+		//setXY4
+		//1---2
+		//|   |
+		//|   |
+		//3---4
+
+		setXY4(poly, x, y, 
+					x + w, y,
+					x, y + h,
+					x + w, y + h);
+		setRGB0(poly, r, g, b);
+		poly->tpage = getTPage(timImage.mode, 0, timImage.prect->x, timImage.prect->y);
+
+		// Set CLUT
+		setClut(poly, timImage.crect->x, timImage.crect->y);
+		
+		// Set texture coordinates
+		setUVWH(poly, ux, uy, 32, 32);
+
+		*prim = poly;
+	}
 }
 
 void InitRectangle(int i)
@@ -250,14 +291,14 @@ void DrawStressTest(RenderContext* ctx)
 	for(i = 0; i < NUM_RECTANGLES; i++)
 	{
 		update_position(&x[i], &y[i], &dx[i], &dy[i], w[i], h[i]); //aggiornare posizione di un quadrato alla volta
-		draw_rectangle(ctx, &tiles[i], x[i], y[i], i + 1, w[i], h[i], r[i], g[i], b[i]);
+		draw_rectangle(ctx, &tiles[i], useTexture, 32, 0, x[i], y[i], i + 1, w[i], h[i], r[i], g[i], b[i]);
 	}
 }
 
 void DrawMovableTest(RenderContext* ctx)
 {
 	//utilizzo solo il primo
-	draw_rectangle(ctx, &tiles[0], x[0], y[0], 1, w[0], h[0], r[0], g[0], b[0]);
+	draw_rectangle(ctx, &tiles[0], useTexture, 32, 0, x[0], y[0], 1, w[0], h[0], r[0], g[0], b[0]);
 }
 
 void DrawMenu(RenderContext* ctx)
@@ -268,7 +309,7 @@ void DrawMenu(RenderContext* ctx)
 	for(i = 0; i < NUM_CHOICES; i++)
 	{
 		if(curMenuChoice == i)
-			draw_rectangle(ctx, &menuTile, MENU_X - BASE_W, y, 0, 8, 8, 255, 0, 0);
+			draw_rectangle(ctx, &menuTile, 1, 0, 0, MENU_X - 14, y, 0, 8, 8, 255, 0, 0);
 
 		draw_text(ctx, MENU_X, y, 0, menuChoicesText[i]);
 
@@ -363,14 +404,18 @@ void HandleMovableTestCommands(PADTYPE* pad)
 		w[0] = curW;
 		h[0] = curH;
 	}
+
+	HandleTextureCommand(pad);
 }
 
 void HandleStressTestCommands(PADTYPE* pad)
 {
-	if(!(pad->btn & PAD_SELECT))
+	if((lastButtons & PAD_SELECT) && !(pad->btn & PAD_SELECT))
 	{
 		InitStressTest();
 	}
+
+	HandleTextureCommand(pad);
 }
 
 void OpenMenu()
@@ -483,6 +528,25 @@ void DrawCurrentMode(RenderContext *ctx)
 	}
 }
 
+void HandleTextureCommand(PADTYPE* pad)
+{
+	if((lastButtons & PAD_TRIANGLE) && !(pad->btn & PAD_TRIANGLE))
+	{
+		useTexture = !useTexture;
+	}
+}
+
+void LoadTextures()
+{
+	GetTimInfo( tilesc, &timImage ); /* Get TIM parameters */
+
+	LoadImage( timImage.prect, timImage.paddr );		/* Upload texture to VRAM */
+	if( timImage.mode & 0x8 ) 
+	{
+		LoadImage( timImage.crect, timImage.caddr );	/* Upload CLUT if present */
+	}
+}
+
 int main(int argc, const char **argv) {
 	// Initialize the GPU and load the default font texture provided by
 	// PSn00bSDK at (960, 0) in VRAM.
@@ -492,6 +556,8 @@ int main(int argc, const char **argv) {
 	// Set up our rendering context.
 	RenderContext ctx;
 	setup_context(&ctx, SCREEN_XRES, SCREEN_YRES, 63, 0, 127);
+
+	LoadTextures();
 
 	// Set up controller polling.
 	uint8_t pad_buff[2][34];
