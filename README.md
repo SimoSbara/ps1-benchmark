@@ -6,6 +6,8 @@ A PS1 benchmark created with [PSn00bSDK](https://github.com/Lameguy64/PSn00bSDK)
 
 This benchmark is created for testing PS1 capabilities: graphics, commands and audio.
 
+![](https://github.com/SimoSbara/ps1-benchmark/blob/main/bench_gif_1.gif)
+
 ### Testing
 This program is tested on [DuckStation](https://www.duckstation.org/) PS1 emulator.
 
