@@ -17,7 +17,7 @@ If you want to test it on a real PS1, you will need to mod it with a [chip](http
 ### Little Side Note
 You can't use CD-RW because the PS1 laser reader cannot read it, use only good CD-R (Verbatim or Sony).
 
-Download the latest release and burn .iso into a CD using any CD burner software.
+Download the latest [release](https://github.com/SimoSbara/ps1-benchmark/releases) and burn .iso into a CD using any CD burner software.
 
 ## Development
 This project is currently in development on Ubuntu (using WSL), Windows is not tested.
