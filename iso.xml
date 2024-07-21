@@ -59,15 +59,14 @@
 			contain any number of files.
 		-->
 		<directory_tree>
-			<file name="SYSTEM.CNF"		type="data" source="${PROJECT_SOURCE_DIR}/system.cnf" />
-			<file name="BENCH.EXE"	type="data" source="bench.exe" />
-			<!--
-				This file is only required if you are using dynamic linking
-				(see the system/dynlink example). It contains the executable's
-				symbol map and can be used to obtain the address of a function
-				or global variable by its name.
-			-->
-			<!--<file name="TEMPLATE.MAP"	type="data" source="template.map" />-->
+			<file name="SYSTEM.CNF"			type="data" source="${PROJECT_SOURCE_DIR}/system.cnf" />
+			<file name="BENCH.EXE"			type="data" source="bench.exe" />
+
+			<file name="TRACK-1.VAG"		type="data" source="${PROJECT_SOURCE_DIR}/TRACK-1.vag" />
+
+			<file name="TRACK-2.VAG"		type="data" source="${PROJECT_SOURCE_DIR}/TRACK-2.vag" />
+			<file name="TRACK-3.VAG"		type="data" source="${PROJECT_SOURCE_DIR}/TRACK-3.vag" />
+			<file name="TRACK-4.VAG"		type="data" source="${PROJECT_SOURCE_DIR}/TRACK-4.vag" />
 
 			<dummy sectors="1024"/>
 		</directory_tree>
