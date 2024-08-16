@@ -37,6 +37,7 @@
 #include <stdlib.h>
 #include <psxcd.h>
 #include <hwregs_c.h>
+#include <inline_c.h>
 
 #include "stream.h"
 
@@ -123,6 +124,9 @@ typedef struct {
 #define START_VEL		1
 #define START_TRACK		0
 
+const int CENTERX = SCREEN_XRES >> 1;
+const int CENTERY = SCREEN_YRES >> 1;
+
 enum menuChoices
 {
 	STRESS_TEST = 0,
@@ -184,6 +188,11 @@ static uint16_t lastButtons = 0xffff;
 static int curVel = START_VEL;
 static int vel[4] = {1, 3, 5, 7};
 
+static int anglesTable[360]; //da gradi a fixed point
+
+static int discAngle = 0;
+static uint32_t frameCounter = 0;
+
 static char menuChoicesText[NUM_CHOICES][64] =
 {
 	{"STRESS TEST"},
@@ -191,6 +200,17 @@ static char menuChoicesText[NUM_CHOICES][64] =
 	{"AUDIO TEST"},
 	{"BACK"}
 };
+
+void ComputeAngles()
+{
+	//0-360 -> 0-4095
+	float degree = 1.0f / 360.0f * 4096.0f;
+	int i;
+	float d = 0;
+
+	for(i = 0; i < 360; i++, d += degree)
+		anglesTable[i] = d;
+}
 
 // This isn't actually required for this example, however it is necessary if the
 // stream buffers are going to be allocated into a region of SPU RAM that was
@@ -408,45 +428,129 @@ void update_position(int *x, int *y, int *dx, int *dy, int w, int h)
 	*y += *dy;
 }
 
+void DrawRotatedTexturedRectangle(RenderContext* ctx, void** prim, int rt, int ux, int uy, int x0, int y0, int x1, int y1, int z, int r, int g, int b)
+{
+	MATRIX	mtx;	
+	SVECTOR rot = { 0 };
+	VECTOR trasl = { 0 };
+	SVECTOR		pos[4];
+	VECTOR 		outPos[4];
+
+	POLY_FT4* poly = (POLY_FT4*)new_primitive(ctx, z, sizeof(POLY_FT4));
+
+	int xMid = (x0 + x1) >> 1;
+	int yMid = (y0 + y1) >> 1;
+
+	int tx = xMid - CENTERX;
+	int ty = yMid - CENTERY;
+
+	pos[0].vx = x0 - xMid; pos[0].vy = y0 - yMid; pos[0].vz = 0; pos[0].pad = 0; 
+	pos[1].vx = x1 - xMid; pos[1].vy = y0 - yMid; pos[1].vz = 0; pos[1].pad = 0; 
+	pos[2].vx = x0 - xMid; pos[2].vy = y1 - yMid; pos[2].vz = 0; pos[2].pad = 0; 
+	pos[3].vx = x1 - xMid; pos[3].vy = y1 - yMid; pos[3].vz = 0; pos[3].pad = 0; 
+
+	rot.vx = 0;
+	rot.vy = 0;
+	rot.vz = rt;
+
+	setPolyFT4(poly);
+
+	RotMatrix( &rot, &mtx );
+	TransMatrix( &mtx, &trasl );
+
+	gte_SetRotMatrix( &mtx );
+	gte_SetTransMatrix( &mtx );
+
+	// Load the 3D coordinate of the sprite to GTE
+	gte_ldv3(&pos[0], &pos[1], &pos[2]);
+		
+	// Rotation, Translation and Perspective Triple
+	gte_rtpt();
+
+	//gte_stsxy0 mette sia x che y essendo allineati in memoria
+	//vuole puntatore 32 bit ed infatti x e y sono a 16 bit l'uno
+	gte_stsxy0( &poly->x0 );
+	gte_stsxy1( &poly->x1 );
+	gte_stsxy2( &poly->x2 );
+
+	gte_ldv0( &pos[3]);
+	gte_rtps();
+	gte_stsxy( &poly->x3 );
+
+	poly->x0 += tx;
+	poly->y0 += ty;
+
+	poly->x1 += tx;
+	poly->y1 += ty;
+
+	poly->x2 += tx;
+	poly->y2 += ty;
+
+	poly->x3 += tx;
+	poly->y3 += ty;
+	
+	setRGB0(poly, r, g, b);
+
+	poly->tpage = getTPage(timImage.mode, 0, timImage.prect->x, timImage.prect->y);
+
+	// Set CLUT
+	setClut(poly, timImage.crect->x, timImage.crect->y);
+	
+	// Set texture coordinates
+	setUVWH(poly, ux, uy, 31, 31);
+
+	*prim = poly;
+}
+
+void DrawTexturedRectangle(RenderContext* ctx, void** prim, int ux, int uy, int x, int y, int z, int w, int h, int r, int g, int b)
+{
+	POLY_FT4* poly = (POLY_FT4*)new_primitive(ctx, z, sizeof(POLY_FT4));
+
+	setPolyFT4(poly);
+
+	//setXY4 ordine dei vertici
+	//1---2
+	//|   |
+	//|   |
+	//3---4
+
+	setXY4(poly, x, y, 
+				x + w, y,
+				x, y + h,
+				x + w, y + h);
+	setRGB0(poly, r, g, b);
+	poly->tpage = getTPage(timImage.mode, 0, timImage.prect->x, timImage.prect->y);
+
+	// Set CLUT
+	setClut(poly, timImage.crect->x, timImage.crect->y);
+	
+	// Set texture coordinates
+	setUVWH(poly, ux, uy, 32, 32);
+
+	*prim = poly;
+}
+
+void DrawSimpleRectangle(RenderContext* ctx, void** prim, int x, int y, int z, int w, int h, int r, int g, int b)
+{
+	TILE* tile = new_primitive(ctx, z, sizeof(TILE));
+
+	setTile(tile);
+	setXY0 (tile, x, y);
+	setWH  (tile, w, h);
+	setRGB0(tile, r, g, b);
+
+	*prim = tile;
+}
+
 void draw_rectangle(RenderContext* ctx, void** prim, int texture, int ux, int uy, int x, int y, int z, int w, int h, int r, int g, int b)
 {
 	if(!texture)
 	{
-		TILE* tile = new_primitive(ctx, z, sizeof(TILE));
-
-		setTile(tile);
-		setXY0 (tile, x, y);
-		setWH  (tile, w, h);
-		setRGB0(tile, r, g, b);
-
-		*prim = tile;
+		DrawSimpleRectangle(ctx, prim, x, y, z, w, h, r, g, b);
 	}
 	else
 	{
-		POLY_FT4* poly = (POLY_FT4*)new_primitive(ctx, z, sizeof(POLY_FT4));
-
-		setPolyFT4(poly);
-
-		//setXY4 ordine dei vertici
-		//1---2
-		//|   |
-		//|   |
-		//3---4
-
-		setXY4(poly, x, y, 
-					x + w, y,
-					x, y + h,
-					x + w, y + h);
-		setRGB0(poly, r, g, b);
-		poly->tpage = getTPage(timImage.mode, 0, timImage.prect->x, timImage.prect->y);
-
-		// Set CLUT
-		setClut(poly, timImage.crect->x, timImage.crect->y);
-		
-		// Set texture coordinates
-		setUVWH(poly, ux, uy, 32, 32);
-
-		*prim = poly;
+		DrawTexturedRectangle(ctx, prim, ux, uy, x, y, z, w, h, r, g, b);
 	}
 }
 
@@ -577,6 +681,24 @@ void DrawAudioTest(RenderContext* ctx)
 	drawTextList(ctx, xPos, &yPos, 0, TRACK_LIST_DY * 2, "[TRIANGLE]   CHANGE TRACK");
 
 	drawTextList(ctx, xPos, &yPos, 0, TRACK_LIST_DY, "PAUSE AND RESUME IF IT DOESN'T START!");
+	
+	int x0 = SCREEN_XRES - 32 - 8;
+	int y0 = 16;
+	int x1 = x0 + 16;
+	int y1 = y0 + 16;
+
+	//ogni 500 ms gira il disco
+	if(!pausedTracks[currentTrackIndex] && frameCounter % 30 == 0)
+	{
+		int angle = discAngle + anglesTable[90]; //90 gradi
+		
+		if(angle >= anglesTable[359])
+			angle = 0;
+
+		discAngle = angle;
+	}
+
+	DrawRotatedTexturedRectangle(ctx, &tiles[0], discAngle, 64, 0, x0, y0, x1, y1, 0, 128, 128, 128);	
 }
 
 void DrawMenu(RenderContext* ctx)
@@ -960,8 +1082,15 @@ int main(int argc, const char **argv) {
 	RenderContext ctx;
 	setup_context(&ctx, SCREEN_XRES, SCREEN_YRES, 63, 0, 127);
 
+	ComputeAngles();
+
 	//inizializzo CD stream
 	CdInit();
+
+	//inizializzo coprocessore GEOMETRY TRANSFORMATION ENGINE
+	InitGeom();
+	gte_SetGeomOffset( CENTERX, CENTERY );
+	gte_SetGeomScreen( CENTERX );
 
 	LoadTextures();
 	LoadAudioTracks(&ctx);
@@ -980,6 +1109,8 @@ int main(int argc, const char **argv) {
 		DrawCurrentMode(&ctx);
 
 		flip_buffers(&ctx);
+
+		frameCounter++;
 	}
 
 	return 0;
